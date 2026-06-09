@@ -1,77 +1,131 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
-# 1. 페이지 설정 및 타이틀
-st.set_page_config(page_title="달콤살벌 연애상담소", page_icon="💌", layout="centered")
-st.title("💌 달콤살벌 연애상담소")
-st.caption("연애 고민, 썸, 이별... 혼자 끙끙 앓지 말고 Gemini에게 물어보세요!")
+# -----------------------------
+# 페이지 설정
+# -----------------------------
+st.set_page_config(
+    page_title="급식실 자리 챗봇",
+    page_icon="🍽️",
+)
 
-# 2. Streamlit Secrets에서 API 키 불러오기 및 설정
-if "GEMINI_API_KEY" not in st.secrets:
-    st.error("Streamlit Secrets에 'GEMINI_API_KEY'가 설정되지 않았습니다. 관관리자 설정을 확인해주세요.")
+st.title("🍽️ 급식실 자리 추천 챗봇")
+
+# -----------------------------
+# API 키 확인
+# -----------------------------
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+except Exception:
+    st.error(
+        "GEMINI_API_KEY가 설정되지 않았습니다.\n\n"
+        "Streamlit Secrets에 API 키를 등록해주세요."
+    )
     st.stop()
 
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+# -----------------------------
+# Gemini 클라이언트 생성
+# -----------------------------
+try:
+    client = genai.Client(api_key=api_key)
+except Exception as e:
+    st.error(f"Gemini 클라이언트 생성 실패: {e}")
+    st.stop()
 
-# 3. 세션 상태(Session State)로 채팅 기록 초기화
+# -----------------------------
+# 시스템 프롬프트
+# -----------------------------
+SYSTEM_PROMPT = """
+당신은 학교 급식실 자리 추천 챗봇이다.
+
+역할:
+- 학생이 원하는 조건에 맞는 자리를 추천한다.
+- 예시 조건:
+  - 조용한 자리
+  - 친구들과 이야기하기 좋은 자리
+  - 창가 자리
+  - 배식대와 가까운 자리
+  - 출입구와 먼 자리
+  - 혼밥하기 좋은 자리
+
+답변 규칙:
+- 친절하고 간결하게 답변한다.
+- 추천 이유를 함께 설명한다.
+- 실제 좌석 정보를 모를 경우 일반적인 급식실 기준으로 안내한다.
+"""
+
+# -----------------------------
+# 채팅 기록 초기화
+# -----------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {
             "role": "assistant",
-            "content": "안녕하세요! 당신의 연애 고민을 들어드릴 연애 카운셀러입니다. 무슨 고민이 있으신가요? (예: 썸남/썸녀 심리가 궁금해요, 권태기 같아요 등)"
+            "content": "안녕하세요! 🍽️ 원하는 급식실 자리 조건을 말해 주세요."
         }
     ]
 
-# 4. 기존 채팅 기록 화면에 출력
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.write(message["content"])
+# -----------------------------
+# 이전 메시지 출력
+# -----------------------------
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-# 5. 사용자 입력 받기
-if user_input := st.chat_input("고민을 이야기해주세요..."):
-    # 사용자 메시지를 화면에 표시 및 세션에 저장
+# -----------------------------
+# 사용자 입력
+# -----------------------------
+user_input = st.chat_input("예: 조용한 자리 추천해줘")
+
+if user_input:
+    # 사용자 메시지 저장
+    st.session_state.messages.append(
+        {"role": "user", "content": user_input}
+    )
+
     with st.chat_message("user"):
-        st.write(user_input)
-    st.session_state.messages.append({"role": "user", "content": user_input})
+        st.markdown(user_input)
 
-    # 6. Gemini 모델을 통한 답변 생성 (오류 처리 포함)
-    with st.chat_message("assistant"):
-        with st.spinner("답변을 고민하고 있어요... ☕"):
-            try:
-                # 대화 맥락을 유지하기 위해 프롬프트 구성 (역할 부여)
-                system_instruction = (
-                    "너는 친절하고 공감 능력이 뛰어나며, 때로는 뼈 때리는 조언도 아끼지 않는 전문 연애 카운셀러야. "
-                    "상황을 분석하고 따뜻하면서도 현실적인 해결책을 제시해줘. 말투는 다정하고 친근하게 해줘."
-                )
-                
-                # gemini-2.5-flash-lite 모델 로드
-                model = genai.GenerativeModel(
-                    model_name="gemini-2.5-flash-lite",
-                    system_instruction=system_instruction
-                )
-                
-                # Gemini가 인식할 수 있는 형태로 이전 대화 기록 변환
-                # (Gemini API의 chat history 구조에 맞게 변환하거나, 간단하게 텍스트로 합쳐 보낼 수 있습니다)
-                chat = model.start_chat(history=[])
-                
-                # 대화 기록 학습시키기 (최근 대화 맥락 전달)
-                # 단순화를 위해 전체 메시지를 대화 내역으로 주입
-                formatted_history = []
-                for msg in st.session_state.messages[:-1]: # 방금 넣은 user_input 제외
-                    role = "user" if msg["role"] == "user" else "model"
-                    formatted_history.append({"role": role, "parts": [msg["content"]]})
-                
-                chat.history = formatted_history
-                
-                # 답변 생성
-                response = chat.send_message(user_input)
-                ai_response = response.text
-                
-                # 결과 출력 및 저장
-                st.write(ai_response)
-                st.session_state.messages.append({"role": "assistant", "content": ai_response})
-                
-            except Exception as e:
-                # API 오류나 네트워크 문제가 발생했을 때의 예외 처리
-                error_message = f"죄송합니다. 답변을 생성하는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요. 😢\n\n*(오류 내용: {str(e)})*"
-                st.error(error_message)
+    try:
+        # 대화 기록 구성
+        conversation_text = SYSTEM_PROMPT + "\n\n"
+
+        for msg in st.session_state.messages:
+            role = "사용자" if msg["role"] == "user" else "챗봇"
+            conversation_text += f"{role}: {msg['content']}\n"
+
+        # Gemini 호출
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-lite",
+            contents=conversation_text,
+            config=types.GenerateContentConfig(
+                temperature=0.7,
+                max_output_tokens=500,
+            ),
+        )
+
+        answer = response.text
+
+        with st.chat_message("assistant"):
+            st.markdown(answer)
+
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": answer
+            }
+        )
+
+    except Exception as e:
+        error_msg = f"오류가 발생했습니다: {str(e)}"
+
+        with st.chat_message("assistant"):
+            st.error(error_msg)
+
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": error_msg
+            }
+        )
